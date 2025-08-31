@@ -107,9 +107,10 @@ local mac = (function ()
     function M.abort_receive(dst_mac)
         -- 目的过滤：只收自己/广播/组播
         if not (M.mac_eq(dst_mac, M.MAC) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
-            return
+            return true
         end
     
+        return false
     end
 
     return M
