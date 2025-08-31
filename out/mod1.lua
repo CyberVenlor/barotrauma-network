@@ -1,1 +1,0 @@
-local M={}function M.Speak()print("mod1")end return M

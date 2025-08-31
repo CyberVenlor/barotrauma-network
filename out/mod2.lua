@@ -1,1 +1,0 @@
-local mod1=(function()local M={}function M.Speak()print("mod1")end return M end)()local M={}function M.Speak()local mod1=mod1 mod1.Speak()print("mod2")end return M
