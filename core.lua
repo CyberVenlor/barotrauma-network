@@ -10,4 +10,12 @@ function M.time()
     return time()
 end
 
+-- function inp(pin, val)
+    
+-- end
+
+-- function upd(deltaTime)
+    
+-- end
+
 return M

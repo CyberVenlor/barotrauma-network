@@ -34,6 +34,26 @@ local utility = (function ()
         for i=1,#b do o[#o+1]=b[i] end
         return o
     end
+
+    function M.bytes_equal(a, b)
+        if type(a) ~= "table" or type(b) ~= "table" then
+            return false, "both arguments must be tables"
+        end
+        if #a ~= #b then return false end
+        for i = 1, #a do
+            local x, y = a[i], b[i]
+            if type(x) ~= "number" or type(y) ~= "number" then
+                return false, "non-number element at index " .. i
+            end
+            if x ~= y then return false end
+        end
+        return true
+    end
+
+    function M.assert_byte(n, label)
+        assert(type(n) == "number" and n >= 0 and n <= 255 and n == math.floor(n),
+            (label or "byte") .. " must be integer 0..255")
+    end
   
       -- 工具：u16
     function M.u16_to_bytes(n)
@@ -49,6 +69,23 @@ local utility = (function ()
         ["A"]=10, ["B"]=11, ["C"]=12, ["D"]=13, ["E"]=14, ["F"]=15,
         ["a"]=10, ["b"]=11, ["c"]=12, ["d"]=13, ["e"]=14, ["f"]=15,
     }
+
+    function M.int_to_bytes(val, size)
+        local out = {}
+        for i=size-1,0,-1 do
+            out[#out+1] = math.floor(val / 256^i) % 256
+        end
+        return out
+    end
+
+    -- 从字节数组拼成整数（大端）
+    function M.bytes_to_int(bytes, offset, size)
+        local v = 0
+        for i=0,size-1 do
+            v = v * 256 + bytes[offset+i]
+        end
+        return v
+    end
 
     function M.hex_byte(a, b)
         local hi, lo = hex_map[a], hex_map[b]
@@ -76,8 +113,6 @@ function M.gen_mac()
     end
     return mac
 end
-
-M.MAC = M.gen_mac()
   -- 转换字节数组为字符串
 function M.mac_to_string(mac)
     return string.format("%02X:%02X:%02X:%02X:%02X:%02X",
@@ -96,17 +131,22 @@ function M.string_to_mac(s)
     return mac
 end
 
-function M.mac_eq(a,b)
-    for i=1,6 do if a[i] ~= b[i] then return false end end
-    return true
-  end
+function M.check_mac(mac)
+    assert(type(mac) == "table", "MAC must be a table")
+    assert(#mac == 6, "MAC must have 6 bytes")
+    for i = 1, 6 do
+        local b = mac[i]
+        assert(type(b) == "number" and b >= 0 and b <= 255, "MAC [" .. i .. "] invalid byte")
+    end
+end
   
-function M.is_broadcast_mac(m) return M.mac_eq(m, M.BROADCAST) end
-function M.is_multicast_mac(m) return (m[1] % 2) == 1 end -- 低位bit=1
+function M.is_broadcast_mac(m) return utility.bytes_equal(m, M.BROADCAST) end
+-- function M.is_multicast_mac(m) return (m[1] % 2) == 1 end -- 低位bit=1
+function M.is_multicast_mac(m) return false end -- 低位bit=1
 
-function M.abort_receive(dst_mac)
+function M.abort_receive(src_mac, dst_mac)
     -- 目的过滤：只收自己/广播/组播
-    if not (M.mac_eq(dst_mac, M.MAC) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
+    if not (utility.bytes_equal(dst_mac, src_mac) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
         return true
     end
     

@@ -1,4 +1,4 @@
--- component.lua
+-- core.lua
 local M = {}
 
 function M.tx(pin, data)
@@ -10,5 +10,13 @@ function M.time()
 ---@diagnostic disable-next-line: undefined-global
     return time()
 end
+
+-- function inp(pin, val)
+    
+-- end
+
+-- function upd(deltaTime)
+    
+-- end
 
 return M

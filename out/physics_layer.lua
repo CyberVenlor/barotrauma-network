@@ -34,6 +34,26 @@ local utility = (function ()
         for i=1,#b do o[#o+1]=b[i] end
         return o
     end
+
+    function M.bytes_equal(a, b)
+        if type(a) ~= "table" or type(b) ~= "table" then
+            return false, "both arguments must be tables"
+        end
+        if #a ~= #b then return false end
+        for i = 1, #a do
+            local x, y = a[i], b[i]
+            if type(x) ~= "number" or type(y) ~= "number" then
+                return false, "non-number element at index " .. i
+            end
+            if x ~= y then return false end
+        end
+        return true
+    end
+
+    function M.assert_byte(n, label)
+        assert(type(n) == "number" and n >= 0 and n <= 255 and n == math.floor(n),
+            (label or "byte") .. " must be integer 0..255")
+    end
   
       -- 工具：u16
     function M.u16_to_bytes(n)
@@ -50,6 +70,23 @@ local utility = (function ()
         ["a"]=10, ["b"]=11, ["c"]=12, ["d"]=13, ["e"]=14, ["f"]=15,
     }
 
+    function M.int_to_bytes(val, size)
+        local out = {}
+        for i=size-1,0,-1 do
+            out[#out+1] = math.floor(val / 256^i) % 256
+        end
+        return out
+    end
+
+    -- 从字节数组拼成整数（大端）
+    function M.bytes_to_int(bytes, offset, size)
+        local v = 0
+        for i=0,size-1 do
+            v = v * 256 + bytes[offset+i]
+        end
+        return v
+    end
+
     function M.hex_byte(a, b)
         local hi, lo = hex_map[a], hex_map[b]
         if not hi or not lo then
@@ -60,56 +97,37 @@ local utility = (function ()
 
     return M
 end)()
+-- core.lua
+local core = (function ()
+    local M = {}
 
--- data_link.lua
-local M = {}
-local util = utility
-
-M.ETHERTYPE = {
-    IPv4 = 0x0800,
-    ARP  = 0x0806,
-    LL   = 0x88B5,
-}
-  
-function M.transmit_data(src_mac, dst_mac, payload, etype)
-    if (type(src_mac) ~= "table" or type(dst_mac) ~= "table" or type(payload) ~= "table") then 
-        error("funtion transmit_data receive error type value")
+    function M.tx(pin, data)
+    ---@diagnostic disable-next-line: undefined-global
+        out[pin] = data
     end
-    etype = etype or M.ETHERTYPE.LL
-    -- 头部
-    local frame = {}
-    for i=1,6 do frame[#frame+1] = dst_mac[i] end
-    for i=1,6 do frame[#frame+1] = src_mac[i] end
-    local etb = util.u16_to_bytes(etype)
-    frame[#frame+1] = etb[1]; frame[#frame+1] = etb[2]
 
-    -- 载荷
-    frame = util.concat_bytes(frame, payload)
+    function M.time()
+    ---@diagnostic disable-next-line: undefined-global
+        return time()
+    end
+
+    -- function inp(pin, val)
     
-    local wire = util.bytes_to_string(frame)
-    -- 发到导线
-    return wire
-end
-  
-  -- 接收
-  
-function M.receive_data(data) -- data: string (bytes)
-  
-    local bytes = util.string_to_bytes(data)
-    if #bytes < 14 then return end
-  
-    local dst = {bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6]}
-    local src = {bytes[7],bytes[8],bytes[9],bytes[10],bytes[11],bytes[12]}
-    local et  = util.bytes_to_u16(bytes[13],bytes[14])
-    local payload = {}
-    for i=15,#bytes do payload[#payload+1] = bytes[i] end
-  
-    return {
-        dst = dst,
-        src = src,
-        ethertype = et,
-        payload = payload,
-    }
+    -- end
+
+    -- function upd(deltaTime)
+    
+    -- end
+
+    return M
+end)()
+
+-- physics_layer.lua
+local M = {}
+
+function M.tx(bytes)
+    local s = utility.bytes_to_string(bytes)
+    core.tx(10, s)
 end
 
 return M

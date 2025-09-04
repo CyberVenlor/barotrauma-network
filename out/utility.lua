@@ -33,6 +33,26 @@ function M.concat_bytes(a,b)
     for i=1,#b do o[#o+1]=b[i] end
     return o
 end
+
+function M.bytes_equal(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return false, "both arguments must be tables"
+    end
+    if #a ~= #b then return false end
+    for i = 1, #a do
+        local x, y = a[i], b[i]
+        if type(x) ~= "number" or type(y) ~= "number" then
+            return false, "non-number element at index " .. i
+        end
+        if x ~= y then return false end
+    end
+    return true
+end
+
+function M.assert_byte(n, label)
+    assert(type(n) == "number" and n >= 0 and n <= 255 and n == math.floor(n),
+        (label or "byte") .. " must be integer 0..255")
+end
   
   -- 工具：u16
 function M.u16_to_bytes(n)
@@ -48,6 +68,23 @@ local hex_map = {
     ["A"]=10, ["B"]=11, ["C"]=12, ["D"]=13, ["E"]=14, ["F"]=15,
     ["a"]=10, ["b"]=11, ["c"]=12, ["d"]=13, ["e"]=14, ["f"]=15,
 }
+
+function M.int_to_bytes(val, size)
+    local out = {}
+    for i=size-1,0,-1 do
+        out[#out+1] = math.floor(val / 256^i) % 256
+    end
+    return out
+end
+
+-- 从字节数组拼成整数（大端）
+function M.bytes_to_int(bytes, offset, size)
+    local v = 0
+    for i=0,size-1 do
+        v = v * 256 + bytes[offset+i]
+    end
+    return v
+end
 
 function M.hex_byte(a, b)
     local hi, lo = hex_map[a], hex_map[b]
