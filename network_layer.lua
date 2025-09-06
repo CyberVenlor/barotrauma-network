@@ -9,6 +9,7 @@ local util = require("utility")
 -- src_ip 32b
 -- dst_ip 32b
 -- payload
+M.IP = {192, 168, 1, 1}
 
 function M.package_to_bytes(pkt)
     assert(type(pkt) == "table", "pkt must be a table")
@@ -75,5 +76,8 @@ local pkt = {
     dst_ip = {192, 168, 1, 1}, -- 8.8.8.8
     payload = {1,2,3,4}
 }
+function M.tx(dst_ip, payload, proto)
+    
+end
 
 return M

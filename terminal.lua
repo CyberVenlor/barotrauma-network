@@ -6,8 +6,10 @@ local data_link = require("data_link_layer")
 local serde = require("serde")
 local physics = require("physics_layer")
 local core = require("core")
+local network_layer = require("network_layer")
+local ip = require("ip")
 
-local has_print_mac = false
+local stored_config = nil
 
 function inp(pin, val)
     if pin == 10 then
@@ -23,14 +25,23 @@ function inp(pin, val)
         local input = serde.deserialize(val)
         if input == nil then return end
         data_link.tx(mac.string_to_mac(input.mac), util.string_to_bytes(input.payload))
+    elseif pin == 12 then -- config
+        local config = serde.deserialize(val)
+        if config == nil then return end
+        if stored_config ~= val then
+            stored_config = val
+            core.tx(11, val)
+        end
+        if config.mac ~= nil then
+            data_link.MAC = mac.string_to_mac(config.mac)
+        end
+        if config.ip ~= nil then
+            network_layer.IP = ip.string_to_ipv4(config.ip)
+        end
     end
 end
  
 function upd()
-    if has_print_mac == false then
-        core.tx(11,  mac.mac_to_string(data_link.MAC))
-        has_print_mac = true
-    end
 end
 
 function M.input(pin, val)
