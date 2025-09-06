@@ -125,9 +125,16 @@ end)()
 -- physics_layer.lua
 local M = {}
 
+local util = utility
+
 function M.tx(bytes)
-    local s = utility.bytes_to_string(bytes)
+    local s = util.bytes_to_string(bytes)
     core.tx(10, s)
+end
+
+function M.rx(string)
+    local b = util.string_to_bytes(string)
+    return b
 end
 
 return M

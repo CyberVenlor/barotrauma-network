@@ -3,6 +3,8 @@ local util = require("utility")
 local mac = require("mac")
 local physics = require("physics_layer")
 
+M.MAC = mac.gen_mac()
+
 M.ETHERTYPE = {
     IPv4 = 0x0800,
     IPv6 = 0x86DD,
@@ -66,11 +68,39 @@ function M.bytes_to_frame(bytes)
     return f
 end
 
-function M.tx(pkt)
+function M.abort_receive(src_mac, dst_mac)
+    -- 目的过滤：只收自己/广播/组播
+    if not (require("utility").bytes_equal(dst_mac, src_mac) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
+        return true
+    end
+    
+    return false
+end
+
+function M.tx(dst_mac, payload, ethertype)
+    ethertype = ethertype or M.ETHERTYPE.LL
+
+    local frame = {
+        dst_mac = dst_mac,
+        src_mac = M.MAC,
+        ethertype = ethertype,
+        payload = payload
+    }
+
+    local bytes = M.frame_to_bytes(frame)
+    physics.tx(bytes)
 end
 
 function M.rx(bytes)
-    
+    local frame = M.bytes_to_frame(bytes)
+    if not (util.bytes_equal(M.MAC, frame.dst_mac) or mac.is_broadcast_mac(frame.dst_mac) or mac.is_multicast_mac(frame.dst_mac) ) then
+        return
+    end
+    return {
+        payload = frame.payload,
+        src_mac = frame.src_mac,
+        ethertype = frame.ethertype
+    }
 end
 
 local f = {

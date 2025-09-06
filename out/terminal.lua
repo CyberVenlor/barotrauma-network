@@ -144,15 +144,6 @@ local mac = (function ()
     -- function M.is_multicast_mac(m) return (m[1] % 2) == 1 end -- 低位bit=1
     function M.is_multicast_mac(m) return false end -- 低位bit=1
 
-    function M.abort_receive(src_mac, dst_mac)
-        -- 目的过滤：只收自己/广播/组播
-        if not (utility.bytes_equal(dst_mac, src_mac) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
-            return true
-        end
-    
-        return false
-    end
-
     return M
 end)()
 -- core.lua
@@ -183,9 +174,16 @@ end)()
 local physics_layer = (function ()
     local M = {}
 
+    local util = utility
+
     function M.tx(bytes)
-        local s = utility.bytes_to_string(bytes)
+        local s = util.bytes_to_string(bytes)
         core.tx(10, s)
+    end
+
+    function M.rx(string)
+        local b = util.string_to_bytes(string)
+        return b
     end
 
     return M
@@ -196,6 +194,8 @@ local data_link_layer = (function ()
     local util = utility
     local mac = mac
     local physics = physics_layer
+
+    M.MAC = mac.gen_mac()
 
     M.ETHERTYPE = {
         IPv4 = 0x0800,
@@ -260,11 +260,39 @@ local data_link_layer = (function ()
         return f
     end
 
-    function M.tx(pkt)
+    function M.abort_receive(src_mac, dst_mac)
+        -- 目的过滤：只收自己/广播/组播
+        if not (utility.bytes_equal(dst_mac, src_mac) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
+            return true
+        end
+    
+        return false
+    end
+
+    function M.tx(dst_mac, payload, ethertype)
+        ethertype = ethertype or M.ETHERTYPE.LL
+
+        local frame = {
+            dst_mac = dst_mac,
+            src_mac = M.MAC,
+            ethertype = ethertype,
+            payload = payload
+        }
+
+        local bytes = M.frame_to_bytes(frame)
+        physics.tx(bytes)
     end
 
     function M.rx(bytes)
-    
+        local frame = M.bytes_to_frame(bytes)
+        if not (util.bytes_equal(M.MAC, frame.dst_mac) or mac.is_broadcast_mac(frame.dst_mac) or mac.is_multicast_mac(frame.dst_mac) ) then
+            return
+        end
+        return {
+            payload = frame.payload,
+            src_mac = frame.src_mac,
+            ethertype = frame.ethertype
+        }
     end
 
     local f = {
@@ -642,48 +670,27 @@ local physics = physics_layer
 local core = core
 
 local has_print_mac = false
-local MAC = mac.gen_mac()
 
 function inp(pin, val)
     if pin == 10 then
-        local bytes = util.string_to_bytes(val)
-        print("bytes: " .. serde.serialize(bytes))
-        local frame = data_link.bytes_to_frame(bytes)
-        print(frame)
-        if frame == nil or mac.abort_receive(MAC, frame.dst_mac) then
-            return
-        end
+        print(val)
+        local frame = data_link.rx(physics.rx(val))
+        if frame == nil then return end
         print(serde.serialize(frame))
-        if util.bytes_to_string(frame.payload) == "conf" then
-            return
-        end
+        if util.bytes_to_string(frame.payload) == "conf" then return end
+        --debug
         core.tx(11, util.bytes_to_string(frame.payload))
-        local send_package = {
-            dst_mac = frame.src_mac,
-            src_mac = MAC,
-            ethertype = data_link.ETHERTYPE.IPv4,
-            payload = util.string_to_bytes("conf")
-        }
-        local bytes = data_link.frame_to_bytes(send_package)
-        physics.tx(bytes)
+        data_link.tx(frame.src_mac, util.string_to_bytes("conf"))
     elseif pin == 11 then
         local input = serde.deserialize(val)
-        print("input: " .. val)
         if input == nil then return end
-        local send_frame = {
-            dst_mac = mac.string_to_mac(input.mac),
-            src_mac = MAC,
-            ethertype = data_link.ETHERTYPE.IPv4,
-            payload = util.string_to_bytes(input.payload)
-        }
-        local bytes = data_link.frame_to_bytes(send_frame)
-        physics.tx(bytes)
+        data_link.tx(mac.string_to_mac(input.mac), util.string_to_bytes(input.payload))
     end
 end
  
 function upd()
     if has_print_mac == false then
-        core.tx(11,  mac.mac_to_string(MAC))
+        core.tx(11,  mac.mac_to_string(data_link.MAC))
         has_print_mac = true
     end
 end

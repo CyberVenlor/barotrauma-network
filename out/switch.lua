@@ -144,15 +144,6 @@ local mac = (function ()
     -- function M.is_multicast_mac(m) return (m[1] % 2) == 1 end -- 低位bit=1
     function M.is_multicast_mac(m) return false end -- 低位bit=1
 
-    function M.abort_receive(src_mac, dst_mac)
-        -- 目的过滤：只收自己/广播/组播
-        if not (utility.bytes_equal(dst_mac, src_mac) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
-            return true
-        end
-    
-        return false
-    end
-
     return M
 end)()
 -- core.lua
@@ -183,9 +174,16 @@ end)()
 local physics_layer = (function ()
     local M = {}
 
+    local util = utility
+
     function M.tx(bytes)
-        local s = utility.bytes_to_string(bytes)
+        local s = util.bytes_to_string(bytes)
         core.tx(10, s)
+    end
+
+    function M.rx(string)
+        local b = util.string_to_bytes(string)
+        return b
     end
 
     return M
@@ -196,6 +194,8 @@ local data_link_layer = (function ()
     local util = utility
     local mac = mac
     local physics = physics_layer
+
+    M.MAC = mac.gen_mac()
 
     M.ETHERTYPE = {
         IPv4 = 0x0800,
@@ -260,11 +260,39 @@ local data_link_layer = (function ()
         return f
     end
 
-    function M.tx(pkt)
+    function M.abort_receive(src_mac, dst_mac)
+        -- 目的过滤：只收自己/广播/组播
+        if not (utility.bytes_equal(dst_mac, src_mac) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
+            return true
+        end
+    
+        return false
+    end
+
+    function M.tx(dst_mac, payload, ethertype)
+        ethertype = ethertype or M.ETHERTYPE.LL
+
+        local frame = {
+            dst_mac = dst_mac,
+            src_mac = M.MAC,
+            ethertype = ethertype,
+            payload = payload
+        }
+
+        local bytes = M.frame_to_bytes(frame)
+        physics.tx(bytes)
     end
 
     function M.rx(bytes)
-    
+        local frame = M.bytes_to_frame(bytes)
+        if not (util.bytes_equal(M.MAC, frame.dst_mac) or mac.is_broadcast_mac(frame.dst_mac) or mac.is_multicast_mac(frame.dst_mac) ) then
+            return
+        end
+        return {
+            payload = frame.payload,
+            src_mac = frame.src_mac,
+            ethertype = frame.ethertype
+        }
     end
 
     local f = {

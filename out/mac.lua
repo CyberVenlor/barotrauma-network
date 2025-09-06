@@ -144,13 +144,4 @@ function M.is_broadcast_mac(m) return utility.bytes_equal(m, M.BROADCAST) end
 -- function M.is_multicast_mac(m) return (m[1] % 2) == 1 end -- 低位bit=1
 function M.is_multicast_mac(m) return false end -- 低位bit=1
 
-function M.abort_receive(src_mac, dst_mac)
-    -- 目的过滤：只收自己/广播/组播
-    if not (utility.bytes_equal(dst_mac, src_mac) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
-        return true
-    end
-    
-    return false
-end
-
 return M
