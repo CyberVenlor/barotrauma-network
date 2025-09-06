@@ -97,213 +97,6 @@ local utility = (function ()
 
     return M
 end)()
--- mac.lua
-local mac = (function ()
-    local M = {}
-
-      -- 广播 MAC
-    M.BROADCAST = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF}
-
-    function M.gen_mac()
-        local mac = {}
-        -- 确保第一个字节的最低位为0（即单播地址）
-        mac[1] = math.random(0, 127)  -- 第一个字节范围是 0 到 127，保证最低位为0
-        for i = 2, 6 do
-             mac[i] = math.random(0, 255)
-        end
-        return mac
-    end
-      -- 转换字节数组为字符串
-    function M.mac_to_string(mac)
-        return string.format("%02X:%02X:%02X:%02X:%02X:%02X",
-            mac[1], mac[2], mac[3], mac[4], mac[5], mac[6])
-    end
-  
-    function M.string_to_mac(s)
-        local mac = {}
-            -- 用正则抓取两个十六进制
-        for hi, lo in s:gmatch("(%x)(%x)") do
-            table.insert(mac, utility.hex_byte(hi, lo))
-        end
-        if #mac ~= 6 then
-            error("invalid MAC format")
-        end
-        return mac
-    end
-
-    function M.check_mac(mac)
-        assert(type(mac) == "table", "MAC must be a table")
-        assert(#mac == 6, "MAC must have 6 bytes")
-        for i = 1, 6 do
-            local b = mac[i]
-            assert(type(b) == "number" and b >= 0 and b <= 255, "MAC [" .. i .. "] invalid byte")
-        end
-    end
-  
-    function M.is_broadcast_mac(m) return utility.bytes_equal(m, M.BROADCAST) end
-    -- function M.is_multicast_mac(m) return (m[1] % 2) == 1 end -- 低位bit=1
-    function M.is_multicast_mac(m) return false end -- 低位bit=1
-
-    return M
-end)()
--- core.lua
-local core = (function ()
-    local M = {}
-
-    function M.tx(pin, data)
-    ---@diagnostic disable-next-line: undefined-global
-        out[pin] = data
-    end
-
-    function M.time()
-    ---@diagnostic disable-next-line: undefined-global
-        return time()
-    end
-
-    -- function inp(pin, val)
-    
-    -- end
-
-    -- function upd(deltaTime)
-    
-    -- end
-
-    return M
-end)()
--- physics_layer.lua
-local physics_layer = (function ()
-    local M = {}
-
-    local util = utility
-
-    function M.tx(bytes)
-        local s = util.bytes_to_string(bytes)
-        core.tx(10, s)
-    end
-
-    function M.rx(string)
-        local b = util.string_to_bytes(string)
-        return b
-    end
-
-    return M
-end)()
--- data_link_layer.lua
-local data_link_layer = (function ()
-    local M = {}
-    local util = utility
-    local mac = mac
-    local physics = physics_layer
-
-    M.MAC = mac.gen_mac()
-
-    M.ETHERTYPE = {
-        IPv4 = 0x0800,
-        IPv6 = 0x86DD,
-        ARP  = 0x0806,
-        LL   = 0x88B5,
-    }
-  
-    -- Ethernet II frame <-> bytes
-
-    function M.frame_to_bytes(f)
-        assert(type(f) == "table", "f must be a table")
-
-        mac.check_mac(f.dst_mac)
-        mac.check_mac(f.src_mac)
-
-        assert(type(f.ethertype) == "number" and f.ethertype >= 0 and f.ethertype <= 0xFFFF
-               and f.ethertype == math.floor(f.ethertype),
-               "f.ethertype must be integer 0..65535")
-        assert(type(f.payload) == "table", "f.payload must be a table")
-
-        local bytes = {}
-
-        -- dst_mac (6) + src_mac (6)
-        for i = 1, 6 do util.assert_byte(f.dst_mac[i], "dst_mac["..i.."]"); bytes[#bytes+1] = f.dst_mac[i] end
-        for i = 1, 6 do util.assert_byte(f.src_mac[i], "src_mac["..i.."]"); bytes[#bytes+1] = f.src_mac[i] end
-
-        -- EtherType (big-endian 2 bytes) without bit ops
-        local hi = math.floor(f.ethertype / 256)
-        local lo = f.ethertype % 256
-        bytes[#bytes+1] = hi
-        bytes[#bytes+1] = lo
-
-        -- payload
-        for i = 1, #f.payload do
-            local b = f.payload[i]
-            util.assert_byte(b, "payload["..i.."]")
-            bytes[#bytes+1] = b
-        end
-
-        return bytes
-    end
-
-    function M.bytes_to_frame(bytes)
-        assert(type(bytes) == "table", "bytes must be a table")
-        assert(#bytes >= 14, "not enough bytes for Ethernet II header (need >=14)")
-
-        for i = 1, #bytes do util.assert_byte(bytes[i], "bytes["..i.."]") end
-
-        local f = {}
-        f.dst_mac = { bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6] }
-        f.src_mac = { bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12] }
-
-        -- EtherType (big-endian) without bit ops
-        f.ethertype = bytes[13] * 256 + bytes[14]
-
-        f.payload = {}
-        for i = 15, #bytes do
-            f.payload[#f.payload+1] = bytes[i]
-        end
-
-        return f
-    end
-
-    function M.abort_receive(src_mac, dst_mac)
-        -- 目的过滤：只收自己/广播/组播
-        if not (utility.bytes_equal(dst_mac, src_mac) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
-            return true
-        end
-    
-        return false
-    end
-
-    function M.tx(dst_mac, payload, ethertype)
-        ethertype = ethertype or M.ETHERTYPE.LL
-
-        local frame = {
-            dst_mac = dst_mac,
-            src_mac = M.MAC,
-            ethertype = ethertype,
-            payload = payload
-        }
-
-        local bytes = M.frame_to_bytes(frame)
-        physics.tx(bytes)
-    end
-
-    function M.rx(bytes)
-        local frame = M.bytes_to_frame(bytes)
-        if not (util.bytes_equal(M.MAC, frame.dst_mac) or mac.is_broadcast_mac(frame.dst_mac) or mac.is_multicast_mac(frame.dst_mac) ) then
-            return
-        end
-        return {
-            payload = frame.payload,
-            src_mac = frame.src_mac,
-            ethertype = frame.ethertype
-        }
-    end
-
-    local f = {
-        dst_mac = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
-        src_mac = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
-        ethertype = M.ETHERTYPE.IPv4,
-        payload = {0xDD}
-    }
-
-    return M
-end)()
 -- serde.lua
 local serde = (function ()
     -- serde.lua  (Lua 5.2)
@@ -658,9 +451,60 @@ local serde = (function ()
 
     return M
 end)()
+-- mac.lua
+local mac = (function ()
+    local M = {}
+
+      -- 广播 MAC
+    M.BROADCAST = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF}
+
+    function M.gen_mac()
+        local mac = {}
+        -- 确保第一个字节的最低位为0（即单播地址）
+        mac[1] = math.random(0, 127)  -- 第一个字节范围是 0 到 127，保证最低位为0
+        for i = 2, 6 do
+             mac[i] = math.random(0, 255)
+        end
+        return mac
+    end
+      -- 转换字节数组为字符串
+    function M.mac_to_string(mac)
+        return string.format("%02X:%02X:%02X:%02X:%02X:%02X",
+            mac[1], mac[2], mac[3], mac[4], mac[5], mac[6])
+    end
+  
+    function M.string_to_mac(s)
+        local mac = {}
+            -- 用正则抓取两个十六进制
+        for hi, lo in s:gmatch("(%x)(%x)") do
+            table.insert(mac, utility.hex_byte(hi, lo))
+        end
+        if #mac ~= 6 then
+            error("invalid MAC format")
+        end
+        return mac
+    end
+
+    function M.check_mac(mac)
+        assert(type(mac) == "table", "MAC must be a table")
+        assert(#mac == 6, "MAC must have 6 bytes")
+        for i = 1, 6 do
+            local b = mac[i]
+            assert(type(b) == "number" and b >= 0 and b <= 255, "MAC [" .. i .. "] invalid byte")
+        end
+    end
+  
+    function M.is_broadcast_mac(m) return utility.bytes_equal(m, M.BROADCAST) end
+    -- function M.is_multicast_mac(m) return (m[1] % 2) == 1 end -- 低位bit=1
+    function M.is_multicast_mac(m) return false end -- 低位bit=1
+
+    return M
+end)()
 -- ip.lua
 local ip = (function ()
     local M = {}
+
+    local util = utility
 
     -- "192.168.0.1" -> {192,168,0,1}
     function M.string_to_ipv4(str)
@@ -686,6 +530,13 @@ local ip = (function ()
         return table.concat(ip, ".")
     end
 
+    function M.ip_to_u32(ip)  -- {a,b,c,d} -> u32
+        return util.bytes_to_int(ip)
+      end
+    function M.u32_to_ip(u)
+        return util.int_to_bytes(u, 4)
+    end
+
     function M.check_ip(ip)
         assert(type(ip) == "table", "ip must be table")
         assert(#ip == 4, "ip must have 4 bytes")
@@ -697,11 +548,173 @@ local ip = (function ()
 
     return M
 end)()
+-- core.lua
+local core = (function ()
+    local M = {}
+
+    function M.tx(pin, data)
+    ---@diagnostic disable-next-line: undefined-global
+        out[pin] = data
+    end
+
+    function M.time()
+    ---@diagnostic disable-next-line: undefined-global
+        return time()
+    end
+
+    -- function inp(pin, val)
+    
+    -- end
+
+    -- function upd(deltaTime)
+    
+    -- end
+
+    return M
+end)()
+-- physics_layer.lua
+local physics_layer = (function ()
+    local M = {}
+
+    local util = utility
+
+    function M.tx(bytes)
+        local s = util.bytes_to_string(bytes)
+        core.tx(10, s)
+    end
+
+    function M.rx(string)
+        local b = util.string_to_bytes(string)
+        return b
+    end
+
+    return M
+end)()
+-- data_link_layer.lua
+local data_link_layer = (function ()
+    local M = {}
+    local util = utility
+    local mac = mac
+    local physics = physics_layer
+
+    M.MAC = mac.gen_mac()
+
+    M.ETHERTYPE = {
+        IPv4 = 0x0800,
+        IPv6 = 0x86DD,
+        ARP  = 0x0806,
+        LL   = 0x88B5,
+    }
+  
+    -- Ethernet II frame <-> bytes
+
+    function M.frame_to_bytes(f)
+        assert(type(f) == "table", "f must be a table")
+
+        mac.check_mac(f.dst_mac)
+        mac.check_mac(f.src_mac)
+
+        assert(type(f.ethertype) == "number" and f.ethertype >= 0 and f.ethertype <= 0xFFFF
+               and f.ethertype == math.floor(f.ethertype),
+               "f.ethertype must be integer 0..65535")
+        assert(type(f.payload) == "table", "f.payload must be a table")
+
+        local bytes = {}
+
+        -- dst_mac (6) + src_mac (6)
+        for i = 1, 6 do util.assert_byte(f.dst_mac[i], "dst_mac["..i.."]"); bytes[#bytes+1] = f.dst_mac[i] end
+        for i = 1, 6 do util.assert_byte(f.src_mac[i], "src_mac["..i.."]"); bytes[#bytes+1] = f.src_mac[i] end
+
+        -- EtherType (big-endian 2 bytes) without bit ops
+        local hi = math.floor(f.ethertype / 256)
+        local lo = f.ethertype % 256
+        bytes[#bytes+1] = hi
+        bytes[#bytes+1] = lo
+
+        -- payload
+        for i = 1, #f.payload do
+            local b = f.payload[i]
+            util.assert_byte(b, "payload["..i.."]")
+            bytes[#bytes+1] = b
+        end
+
+        return bytes
+    end
+
+    function M.bytes_to_frame(bytes)
+        assert(type(bytes) == "table", "bytes must be a table")
+        assert(#bytes >= 14, "not enough bytes for Ethernet II header (need >=14)")
+
+        for i = 1, #bytes do util.assert_byte(bytes[i], "bytes["..i.."]") end
+
+        local f = {}
+        f.dst_mac = { bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6] }
+        f.src_mac = { bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12] }
+
+        -- EtherType (big-endian) without bit ops
+        f.ethertype = bytes[13] * 256 + bytes[14]
+
+        f.payload = {}
+        for i = 15, #bytes do
+            f.payload[#f.payload+1] = bytes[i]
+        end
+
+        return f
+    end
+
+    function M.abort_receive(src_mac, dst_mac)
+        -- 目的过滤：只收自己/广播/组播
+        if not (utility.bytes_equal(dst_mac, src_mac) or M.is_broadcast_mac(dst_mac) or M.is_multicast_mac(dst_mac) ) then
+            return true
+        end
+    
+        return false
+    end
+
+    function M.tx(dst_mac, payload, ethertype)
+        ethertype = ethertype or M.ETHERTYPE.LL
+
+        local frame = {
+            dst_mac = dst_mac,
+            src_mac = M.MAC,
+            ethertype = ethertype,
+            payload = payload
+        }
+
+        local bytes = M.frame_to_bytes(frame)
+        physics.tx(bytes)
+    end
+
+    function M.rx(bytes)
+        local frame = M.bytes_to_frame(bytes)
+        if not (util.bytes_equal(M.MAC, frame.dst_mac) or mac.is_broadcast_mac(frame.dst_mac) or mac.is_multicast_mac(frame.dst_mac) ) then
+            return
+        end
+        return {
+            payload = frame.payload,
+            src_mac = frame.src_mac,
+            ethertype = frame.ethertype
+        }
+    end
+
+    local f = {
+        dst_mac = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
+        src_mac = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
+        ethertype = M.ETHERTYPE.IPv4,
+        payload = {0xDD}
+    }
+
+    return M
+end)()
 -- network_layer.lua
 local network_layer = (function ()
     local M = {}
+    local serde = serde
+    local core = core
     local ip = ip
+    local mac_mod = mac
     local util = utility
+    local data_link = data_link_layer
     -- ipv4 protocol
     -- 版本
     -- 首部长度4b
@@ -710,7 +723,90 @@ local network_layer = (function ()
     -- src_ip 32b
     -- dst_ip 32b
     -- payload
+
+    M.PROTO_TYPE = {
+        ICMP = 1,
+        TCP  = 6,
+        UDP  = 17,
+    }
+
     M.IP = {192, 168, 1, 1}
+
+    M.iface = function ()
+        return {
+            ip = M.IP,
+            mask = 24,
+            mac = data_link.MAC
+        }
+    end
+    M.gateway = {192, 168, 1, 1}
+    M.arp_ttl = 60                -- 秒
+    local arp_cache = {}
+    local pend = {}
+
+    local function same_subnet(a, b, mask)
+        local full = math.floor(mask / 8)
+        local rem  = mask - full * 8
+        for i = 1, full do
+          if a[i] ~= b[i] then return false end
+        end
+        if rem > 0 then
+          local step = 2^(8 - rem)                -- 每块大小
+          if math.floor(a[full+1] / step) ~= math.floor(b[full+1] / step) then
+            return false
+          end
+        end
+        return true
+    end
+
+    local arp_pkt = {
+        htype      = 1,   -- Ethernet
+        ptype      = 0x0800, -- IPv4
+        hlen       = 6,   -- MAC 长度
+        plen       = 4,   -- IPv4 长度
+        opcode     = 1,   -- 1=Request, 2=Reply
+  
+        sender_mac = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF},  -- 本机 MAC
+        sender_ip  = {192,168,1,2},                    -- 本机 IP
+        target_mac = {0,0,0,0,0,0},                    -- 请求时置 0
+        target_ip  = {192,168,1,1},                    -- 想解析的 next_hop IP
+    }
+
+    local function arp_lookup(ip_tbl)
+        local ent = arp_cache[ip.ipv4_to_string(ip_tbl)]
+        if not ent then return nil end
+        if ent.expire_at and ent.expire_at <= core.time() then return nil end
+        return ent.mac
+    end
+
+    local function arp_learn(sender_ip_tbl, sender_mac_tbl)
+        arp_cache[ip.ipv4_to_string(sender_ip_tbl)] = { mac = sender_mac_tbl, expire_at = core.time() + M.arp_ttl }
+        print(serde.serialize(arp_cache))
+    end
+  
+
+    local function has_pending_nh(nh)
+        for i = 1, #pend do
+          if util.bytes_equal(pend[i].next_hop, nh) then
+            return true
+          end
+        end
+        return false
+      end
+  
+      -- 学到 ARP 后冲队，只处理 next_hop==sender_ip 的项
+    local function resend_pending(sender_ip)
+        local i = 1
+        while i <= #pend do
+          local it = pend[i]
+          if util.bytes_equal(it.next_hop, sender_ip) then
+            table.remove(pend, i)          -- 先移除再发，避免再次MISS时重复入队
+            M.tx(it.dst_ip, it.payload, it.proto)
+          else
+            i = i + 1
+          end
+        end
+    end
 
     function M.package_to_bytes(pkt)
         assert(type(pkt) == "table", "pkt must be a table")
@@ -777,8 +873,100 @@ local network_layer = (function ()
         dst_ip = {192, 168, 1, 1}, -- 8.8.8.8
         payload = {1,2,3,4}
     }
+
     function M.tx(dst_ip, payload, proto)
-    
+        proto = proto or M.PROTO_TYPE.UDP
+        print("dst_ip =" .. serde.serialize(dst_ip))
+        local ifc = M.iface()
+        print("iface =" .. serde.serialize(ifc))
+        if not ifc or not ifc.ip or not ifc.mask then return "NO_IFACE" end
+
+        local next_hop
+        if same_subnet(dst_ip, ifc.ip, ifc.mask) then
+          next_hop = dst_ip               -- 直连
+        elseif M.gateway then
+          next_hop = M.gateway         -- 走默认网关
+        else
+          return "NO_ROUTE"
+        end
+        print("next_hop=" .. serde.serialize(next_hop))
+
+        local mac = arp_lookup(next_hop)
+        if not mac then
+            -- 这里可顺手触发一次 ARP 请求，但不等待；本次直接失败
+            local arp_pkt = {
+                htype      = 1,   -- Ethernet
+                ptype      = 0x0800, -- IPv4
+                hlen       = 6,   -- MAC 长度
+                plen       = 4,   -- IPv4 长度
+                opcode     = 1,   -- 1=Request, 2=Reply
+        
+                sender_mac = ifc.mac,  -- 本机 MAC
+                sender_ip  = ifc.ip,           -- 本机 IP
+                target_mac = {0,0,0,0,0,0},                    -- 请求时置 0
+                target_ip  = dst_ip                   -- 想解析的 next_hop IP
+            }
+            local has_pending = has_pending_nh(next_hop)
+            table.insert(pend, {
+                next_hop = next_hop,
+                dst_ip = dst_ip,
+                payload = payload,
+                proto = proto,
+            })
+            print("pendd:" .. serde.serialize(pend))
+            if not has_pending then
+                data_link.tx(mac_mod.BROADCAST, util.string_to_bytes(serde.serialize(arp_pkt)), data_link.ETHERTYPE.ARP)
+            end
+        
+            return
+        end
+
+        print("mac=", serde.serialize(mac))
+
+        local pkt = {
+          version = 4, ihl = 5, ttl = 64, proto = proto,
+          src_ip = ifc.ip, dst_ip = dst_ip, payload = payload
+        }
+
+        data_link.tx(mac, util.string_to_bytes(serde.serialize(pkt)), data_link.ETHERTYPE.IPv4)
+
+        return "SUCCESS"
+    end
+
+    function M.rx(frame)
+        if frame == nil then return end
+        local ifc = M.iface()
+        if frame.ethertype == data_link.ETHERTYPE.ARP then
+            local receive_pkt = serde.deserialize(util.bytes_to_string(frame.payload))
+            if receive_pkt == nil then return end
+            if not util.bytes_equal(receive_pkt.target_ip, ifc.ip) then return end
+            if receive_pkt.opcode == 1 then
+                local send_pkt = {
+                    htype      = 1,   -- Ethernet
+                    ptype      = 0x0800, -- IPv4
+                    hlen       = 6,   -- MAC 长度
+                    plen       = 4,   -- IPv4 长度
+                    opcode     = 2,   -- 1=Request, 2=Reply
+            
+                    sender_mac = ifc.mac,  -- 本机 MAC
+                    sender_ip  = ifc.ip,           -- 本机 IP
+                    target_mac = receive_pkt.sender_mac,             -- 请求时置 0
+                    target_ip  = receive_pkt.sender_ip            -- 想解析的 next_hop IP
+                }
+                print("sendpkg:" .. serde.serialize(send_pkt))
+                data_link.tx(receive_pkt.sender_mac, util.string_to_bytes(serde.serialize(send_pkt)), data_link.ETHERTYPE.ARP)
+            elseif receive_pkt.opcode == 2 then
+                arp_learn(receive_pkt.sender_ip, receive_pkt.sender_mac)
+                print("pend:"..serde.serialize(pend))
+                resend_pending(receive_pkt.sender_ip)
+            end
+        elseif frame.ethertype == data_link.ETHERTYPE.IPv4 then
+            local receive_pkt = serde.deserialize(util.bytes_to_string(frame.payload))
+            if receive_pkt == nil then return end
+            if receive_pkt.version ~= 4 then return end
+            if not util.bytes_equal(receive_pkt.dst_ip, ifc.ip) then return end
+            return receive_pkt.payload
+        end
     end
 
     return M
@@ -788,30 +976,27 @@ local terminal = (function ()
     local M = {}
 
     local util = utility
-    local mac = mac
-    local data_link = data_link_layer
     local serde = serde
-    local physics = physics_layer
-    local core = core
-    local network_layer = network_layer
+    local mac = mac
     local ip = ip
+    local core = core
+    local physics = physics_layer
+    local data_link = data_link_layer
+    local network_layer = network_layer
+
 
     local stored_config = nil
 
     function inp(pin, val)
         if pin == 10 then
-            print(val)
-            local frame = data_link.rx(physics.rx(val))
-            if frame == nil then return end
-            print(serde.serialize(frame))
-            if util.bytes_to_string(frame.payload) == "conf" then return end
-            --debug
-            core.tx(11, util.bytes_to_string(frame.payload))
-            data_link.tx(frame.src_mac, util.string_to_bytes("conf"))
+            local payload = network_layer.rx(data_link.rx(physics.rx(val)))
+            if payload == nil then return end
+            --print(serde.serialize(frame))
+            core.tx(11, util.bytes_to_string(payload))
         elseif pin == 11 then
             local input = serde.deserialize(val)
             if input == nil then return end
-            data_link.tx(mac.string_to_mac(input.mac), util.string_to_bytes(input.payload))
+            print(network_layer.tx(ip.string_to_ipv4(input.ip), util.string_to_bytes(input.payload)))
         elseif pin == 12 then -- config
             local config = serde.deserialize(val)
             if config == nil then return end
@@ -835,7 +1020,8 @@ local terminal = (function ()
         inp(pin, val)
     end
 
-    --{mac="AC:F9:3A:8E:BE:10",payload="fuck"}
+    -- {mac="90:C5:60:58:B7:BD",payload="fuck"}
+    -- {ip="192.168.1.4",payload="fuck"}
 
     return M
 end)()

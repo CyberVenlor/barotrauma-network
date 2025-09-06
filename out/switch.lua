@@ -684,11 +684,11 @@ function inp(pin, val)
     local src_mac = mac.mac_to_string(frame.src_mac)
     -- learn new mac
     mac_table[src_mac] = {pin = pin, time = core.time()}
-    print("src_mac: " .. src_mac .. ", dst_mac: ".. mac.mac_to_string(frame.dst_mac) .. ", pin: " .. pin .. ", time: ", core.time())
-    print(serde.serialize(mac_table))
+    --print("src_mac: " .. src_mac .. ", dst_mac: ".. mac.mac_to_string(frame.dst_mac) .. ", pin: " .. pin .. ", time: ", core.time())
+    --print(serde.serialize(mac_table))
     -- broadcast
     if mac.is_broadcast_mac(frame.dst_mac) or mac.is_multicast_mac(frame.dst_mac) then
-        print("broadcast")
+        --print("broadcast")
         broadcast(val, pin)
         return
     end
@@ -696,7 +696,7 @@ function inp(pin, val)
     -- 泛洪
     local pair = mac_table[dst_mac]
     if pair == nil then
-        print("泛洪")
+        --print("泛洪")
         broadcast(val, pin)
         return
     end
