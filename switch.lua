@@ -21,7 +21,7 @@ function inp(pin, val)
     end
     local src_mac = mac.mac_to_string(frame.src_mac)
     -- learn new mac
-    mac_table[src_mac] = {pin = pin, time = core.time()}
+    mac_table[src_mac] = {pin = pin, expired_time = core.time() + 60}
     --print("src_mac: " .. src_mac .. ", dst_mac: ".. mac.mac_to_string(frame.dst_mac) .. ", pin: " .. pin .. ", time: ", core.time())
     --print(require("serde").serialize(mac_table))
     -- broadcast
@@ -45,7 +45,7 @@ end
 function upd()
     -- 老化
     for key, value in pairs(mac_table) do
-        if core.time() - value.time > 60 then
+        if core.time() >= value.expired_time then
             mac_table[key] = nil
         end
     end
