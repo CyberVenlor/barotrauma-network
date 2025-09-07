@@ -760,10 +760,6 @@ local function same_subnet(a, b, mask)
 end
 
 local arp_pkt = {
-    htype      = 1,   -- Ethernet
-    ptype      = 0x0800, -- IPv4
-    hlen       = 6,   -- MAC 长度
-    plen       = 4,   -- IPv4 长度
     opcode     = 1,   -- 1=Request, 2=Reply
   
     sender_mac = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF},  -- 本机 MAC
@@ -771,6 +767,40 @@ local arp_pkt = {
     target_mac = {0,0,0,0,0,0},                    -- 请求时置 0
     target_ip  = {192,168,1,1},                    -- 想解析的 next_hop IP
 }
+
+-- 序列化 ARP
+function M.arp_to_bytes(pkt)
+    assert(type(pkt) == "table", "pkt must be a table")
+    assert(type(pkt.opcode) == "number", "pkt.opcode must be number")
+
+    local bytes = {}
+    bytes[#bytes+1] = pkt.opcode % 256
+
+    for i=1,6 do util.assert_byte(pkt.sender_mac[i], "sender_mac["..i.."]"); bytes[#bytes+1] = pkt.sender_mac[i] end
+    for i=1,4 do util.assert_byte(pkt.sender_ip[i],  "sender_ip["..i.."]");  bytes[#bytes+1] = pkt.sender_ip[i]  end
+    for i=1,6 do util.assert_byte(pkt.target_mac[i], "target_mac["..i.."]"); bytes[#bytes+1] = pkt.target_mac[i] end
+    for i=1,4 do util.assert_byte(pkt.target_ip[i],  "target_ip["..i.."]");  bytes[#bytes+1] = pkt.target_ip[i]  end
+
+    return bytes
+end
+
+-- 反序列化 ARP
+function M.bytes_to_arp(bytes)
+    assert(type(bytes) == "table", "bytes must be table")
+    assert(#bytes >= 21, "not enough bytes for ARP (need >=21)")
+
+    for i=1,#bytes do util.assert_byte(bytes[i], "bytes["..i.."]") end
+
+    local pkt = {}
+    pkt.opcode = bytes[1]
+
+    pkt.sender_mac = { bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7] }
+    pkt.sender_ip  = { bytes[8], bytes[9], bytes[10], bytes[11] }
+    pkt.target_mac = { bytes[12],bytes[13],bytes[14],bytes[15],bytes[16],bytes[17] }
+    pkt.target_ip  = { bytes[18],bytes[19],bytes[20],bytes[21] }
+
+    return pkt
+end
 
 local function arp_lookup(ip_tbl)
     local ent = arp_cache[ip.ipv4_to_string(ip_tbl)]
@@ -876,9 +906,7 @@ local pkt = {
 
 function M.tx(dst_ip, payload, proto)
     proto = proto or M.PROTO_TYPE.UDP
-    print("dst_ip =" .. serde.serialize(dst_ip))
     local ifc = M.iface()
-    print("iface =" .. serde.serialize(ifc))
     if not ifc or not ifc.ip or not ifc.mask then return "NO_IFACE" end
 
     local next_hop
@@ -889,16 +917,11 @@ function M.tx(dst_ip, payload, proto)
     else
       return "NO_ROUTE"
     end
-    print("next_hop=" .. serde.serialize(next_hop))
 
     local mac = arp_lookup(next_hop)
     if not mac then
         -- 这里可顺手触发一次 ARP 请求，但不等待；本次直接失败
         local arp_pkt = {
-            htype      = 1,   -- Ethernet
-            ptype      = 0x0800, -- IPv4
-            hlen       = 6,   -- MAC 长度
-            plen       = 4,   -- IPv4 长度
             opcode     = 1,   -- 1=Request, 2=Reply
         
             sender_mac = ifc.mac,  -- 本机 MAC
@@ -913,22 +936,19 @@ function M.tx(dst_ip, payload, proto)
             payload = payload,
             proto = proto,
         })
-        print("pendd:" .. serde.serialize(pend))
         if not has_pending then
-            data_link.tx(mac_mod.BROADCAST, util.string_to_bytes(serde.serialize(arp_pkt)), data_link.ETHERTYPE.ARP)
+            data_link.tx(mac_mod.BROADCAST, M.arp_to_bytes(arp_pkt), data_link.ETHERTYPE.ARP)
         end
         
-        return
+        return "ARP"
     end
-
-    print("mac=", serde.serialize(mac))
 
     local pkt = {
       version = 4, ihl = 5, ttl = 64, proto = proto,
       src_ip = ifc.ip, dst_ip = dst_ip, payload = payload
     }
 
-    data_link.tx(mac, util.string_to_bytes(serde.serialize(pkt)), data_link.ETHERTYPE.IPv4)
+    data_link.tx(mac, M.package_to_bytes(pkt), data_link.ETHERTYPE.IPv4)
 
     return "SUCCESS"
 end
@@ -937,15 +957,11 @@ function M.rx(frame)
     if frame == nil then return end
     local ifc = M.iface()
     if frame.ethertype == data_link.ETHERTYPE.ARP then
-        local receive_pkt = serde.deserialize(util.bytes_to_string(frame.payload))
+        local receive_pkt = M.bytes_to_arp(frame.payload)
         if receive_pkt == nil then return end
         if not util.bytes_equal(receive_pkt.target_ip, ifc.ip) then return end
         if receive_pkt.opcode == 1 then
             local send_pkt = {
-                htype      = 1,   -- Ethernet
-                ptype      = 0x0800, -- IPv4
-                hlen       = 6,   -- MAC 长度
-                plen       = 4,   -- IPv4 长度
                 opcode     = 2,   -- 1=Request, 2=Reply
             
                 sender_mac = ifc.mac,  -- 本机 MAC
@@ -953,15 +969,14 @@ function M.rx(frame)
                 target_mac = receive_pkt.sender_mac,             -- 请求时置 0
                 target_ip  = receive_pkt.sender_ip            -- 想解析的 next_hop IP
             }
-            print("sendpkg:" .. serde.serialize(send_pkt))
-            data_link.tx(receive_pkt.sender_mac, util.string_to_bytes(serde.serialize(send_pkt)), data_link.ETHERTYPE.ARP)
+            arp_learn(send_pkt.sender_ip, send_pkt.sender_mac)
+            data_link.tx(receive_pkt.sender_mac, M.arp_to_bytes(send_pkt), data_link.ETHERTYPE.ARP)
         elseif receive_pkt.opcode == 2 then
             arp_learn(receive_pkt.sender_ip, receive_pkt.sender_mac)
-            print("pend:"..serde.serialize(pend))
             resend_pending(receive_pkt.sender_ip)
         end
     elseif frame.ethertype == data_link.ETHERTYPE.IPv4 then
-        local receive_pkt = serde.deserialize(util.bytes_to_string(frame.payload))
+        local receive_pkt = M.bytes_to_package(frame.payload)
         if receive_pkt == nil then return end
         if receive_pkt.version ~= 4 then return end
         if not util.bytes_equal(receive_pkt.dst_ip, ifc.ip) then return end

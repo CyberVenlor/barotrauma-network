@@ -46,6 +46,6 @@ function M.input(pin, val)
 end
 
 -- {mac="90:C5:60:58:B7:BD",payload="fuck"}
--- {ip="192.168.1.4",payload="fuck"}
+-- {ip="192.168.1.4",payload="hi mother fucker"}
 
 return M
